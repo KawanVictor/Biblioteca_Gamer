@@ -1,0 +1,2 @@
+# Tkinter e sqlite3 já inclusos com Python.
+# Se quiser futuramente: pillow (para imagens), requests (APIs) etc.
