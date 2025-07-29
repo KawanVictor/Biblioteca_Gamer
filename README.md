@@ -2,7 +2,7 @@
 
 Uma aplicação desktop moderna para gerenciar a sua coleção de jogos e consoles — rápida, fácil e expansível.
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue.svgields.io/badge/Tkinter-tt[SQLite](https://img.shields.io/badge/SQLite-DB-lightgreyields.io/badge/status-em% ✨ Funcionalidades
+✨ Funcionalidades
 
 Cadastro de consoles/plataformas com validação automática.
 Cadastro, edição e remoção de jogos, associando ao console, status, nota, ano, gênero, favoritos e mais.
