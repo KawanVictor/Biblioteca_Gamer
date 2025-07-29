@@ -1,13 +1,11 @@
 """
-Controller central (controllers/controller.py).
-Orquestra ações entre os módulos de interface (views) e banco (database).
-No exemplo, apenas importações simples para repassar funções.
+controllers/controller.py
+Controlador: faz a ponte entre view e banco, pronto para crescer com regras de negócio.
 """
 
 from database.db import (
-    cria_tabelas,
-    cadastrar_console, buscar_consoles, remover_console,
-    cadastrar_jogo, listar_jogos, remover_jogo, atualizar_jogo
+    cria_tabelas, cadastrar_console, buscar_consoles,
+    remover_console, cadastrar_jogo, listar_jogos,
+    remover_jogo, atualizar_jogo
 )
-
-# Opcional: Adicione aqui funções de validação mais complexas, automatização, etc.
+# Pode adicionar funções que combinem ou validem regras de negócio futuramente.

@@ -1,19 +1,16 @@
 """
-Módulo de acesso ao banco de dados SQLite (database/db.py).
-Gestão de conexão, criação de tabelas e operações CRUD.
+database/db.py
+Funções do banco: criar tabelas, CRUD de consoles e jogos.
 """
+
 import sqlite3
 
 def conecta():
-    """
-    Conecta ao banco de dados SQLite (arquivo local).
-    """
+    """Conecta ao banco SQLite local."""
     return sqlite3.connect("biblioteca_gamer.db")
 
 def cria_tabelas():
-    """
-    Cria as tabelas consoles e jogos no banco, caso não existam.
-    """
+    """Cria as tabelas consoles e jogos, se não existirem."""
     with conecta() as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -39,57 +36,45 @@ def cria_tabelas():
 
 def cadastrar_console(nome_console):
     """
-    Insere um novo console. Nome não pode ser vazio/duplicado.
-    Retorna True se cadastrado, False caso já exista.
+    Adiciona um console. Retorna True se ok, False se já existe ou nome vazio.
     """
     if not nome_console.strip():
         return False
     try:
         with conecta() as conn:
-            cur = conn.cursor()
-            cur.execute("INSERT INTO consoles (nome) VALUES (?)", (nome_console.strip(),))
+            conn.execute("INSERT INTO consoles (nome) VALUES (?)", (nome_console.strip(),))
         return True
     except sqlite3.IntegrityError:
         return False
 
 def buscar_consoles():
-    """
-    Busca todos os consoles cadastrados.
-    """
+    """Lista (id, nome) dos consoles cadastrados."""
     with conecta() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT id, nome FROM consoles ORDER BY nome")
-        return cur.fetchall()
+        return conn.execute("SELECT id, nome FROM consoles ORDER BY nome").fetchall()
 
 def cadastrar_jogo(nome, id_console, status, avaliacao, comentario, favorito, ano, genero):
-    """
-    Insere um novo jogo. Campos essenciais: nome, id_console.
-    """
+    """Adiciona novo jogo - nome e console obrigatórios."""
     with conecta() as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO jogos
-                (nome, id_console, status, avaliacao, comentario, favorito, ano_lancamento, genero)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        conn.execute("""
+            INSERT INTO jogos (nome, id_console, status, avaliacao, comentario,
+                               favorito, ano_lancamento, genero)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            nome.strip(),
-            id_console,
+            nome.strip(), id_console,
             status.strip() if status else None,
-            avaliacao,
-            comentario.strip() if comentario else "",
-            favorito,
-            ano,
-            genero.strip() if genero else ""
+            avaliacao, comentario.strip() if comentario else "",
+            favorito, ano, genero.strip() if genero else ""
         ))
 
 def listar_jogos(filtro_console=None, filtro_status=None, apenas_favoritos=False):
     """
-    Busca jogos, podendo filtrar por console, status ou favoritos.
+    Lista jogos cadastrados - permite filtrar por console, status, favoritos.
+    Retorna lista de tuplas: (id, nome, nome_console, status, avaliacao, favorito)
     """
     query = """
         SELECT jogos.id, jogos.nome, consoles.nome, jogos.status, jogos.avaliacao, jogos.favorito
-          FROM jogos
-     LEFT JOIN consoles ON jogos.id_console = consoles.id
+        FROM jogos
+        LEFT JOIN consoles ON jogos.id_console = consoles.id
     """
     filtros = []
     params = []
@@ -105,46 +90,31 @@ def listar_jogos(filtro_console=None, filtro_status=None, apenas_favoritos=False
         query += " WHERE " + " AND ".join(filtros)
     query += " ORDER BY jogos.nome"
     with conecta() as conn:
-        cur = conn.cursor()
-        cur.execute(query, params)
-        return cur.fetchall()
+        return conn.execute(query, params).fetchall()
 
 def remover_jogo(id_jogo):
-    """
-    Remove um jogo pelo ID.
-    """
+    """Remove jogo pelo ID."""
     with conecta() as conn:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM jogos WHERE id = ?", (id_jogo,))
+        conn.execute("DELETE FROM jogos WHERE id = ?", (id_jogo,))
 
 def remover_console(id_console):
-    """
-    Remove um console pelo ID e todos os jogos associados.
-    """
+    """Remove console e todos os jogos daquele console."""
     with conecta() as conn:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM jogos WHERE id_console = ?", (id_console,))
-        cur.execute("DELETE FROM consoles WHERE id = ?", (id_console,))
+        conn.execute("DELETE FROM jogos WHERE id_console = ?", (id_console,))
+        conn.execute("DELETE FROM consoles WHERE id = ?", (id_console,))
 
 def atualizar_jogo(id_jogo, nome, id_console, status, avaliacao, comentario, favorito, ano, genero):
-    """
-    Atualiza os dados de um jogo.
-    """
+    """Atualiza dados de jogo pelo ID."""
     with conecta() as conn:
-        cur = conn.cursor()
-        cur.execute("""
+        conn.execute("""
             UPDATE jogos
                SET nome=?, id_console=?, status=?, avaliacao=?, comentario=?,
                    favorito=?, ano_lancamento=?, genero=?
              WHERE id=?
         """, (
-            nome.strip(),
-            id_console,
+            nome.strip(), id_console,
             status.strip() if status else None,
-            avaliacao,
-            comentario.strip() if comentario else "",
-            favorito,
-            ano,
-            genero.strip() if genero else "",
+            avaliacao, comentario.strip() if comentario else "",
+            favorito, ano, genero.strip() if genero else "",
             id_jogo
         ))

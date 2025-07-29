@@ -1,7 +1,8 @@
 """
-Ponto de entrada do sistema (main.py).
-Garante que banco está pronto e aciona a interface.
+main.py
+Ponto de entrada - prepara banco e inicia UI.
 """
+
 from controllers.controller import cria_tabelas
 from views.ui import iniciar
 
