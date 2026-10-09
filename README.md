@@ -50,13 +50,13 @@ No menu principal, escolha:
 
 Consoles/Plataformas: cadastre ou remova plataformas (ex: PC, Xbox, PS5...).
 
-Jogos: cadastre novos jogos, filtre por console, busque pelo nome, edite rapidamente com duplo clique.
+Jogos: cadastre novos jogos, filtre por console, status e listas, busque pelo nome, edite com duplo clique na linha (ou "Editar selecionado") e remova com "Remover selecionado".
 
 Use o botão "Alternar Tema" para trocar entre modos escuro/claro.
 
 Marque favoritos para ver a estrela na tabela.
 
-Barra de progresso mostra quantos jogos já zerou (requer que o status do jogo contenha "zerado").
+Barra de progresso mostra quantos jogos já zerou (conta os jogos com status "Zerado").
 
 # Tecnologias Utilizadas
 

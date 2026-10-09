@@ -75,7 +75,7 @@ def cadastrar_jogo(
 
 def listar_jogos(
     filtro_console=None, filtro_status=None, apenas_favoritos=False,
-    apenas_wishlist=False, apenas_backlog=False
+    apenas_wishlist=False, apenas_backlog=False, busca_nome=None
 ):
     query = """
         SELECT
@@ -90,7 +90,11 @@ def listar_jogos(
             jogos.data_inicio,
             jogos.data_fim,
             jogos.horas_jogadas,
-            jogos.progresso
+            jogos.progresso,
+            jogos.ano_lancamento,
+            jogos.genero,
+            jogos.comentario,
+            jogos.id_console
         FROM jogos
         LEFT JOIN consoles ON jogos.id_console = consoles.id
     """
@@ -105,6 +109,8 @@ def listar_jogos(
         filtros.append("jogos.wishlist = 1")
     if apenas_backlog:
         filtros.append("jogos.backlog = 1")
+    if busca_nome and busca_nome.strip():
+        filtros.append("jogos.nome LIKE ?"); params.append(f"%{busca_nome.strip()}%")
     if filtros:
         query += " WHERE " + " AND ".join(filtros)
     query += " ORDER BY jogos.nome"
