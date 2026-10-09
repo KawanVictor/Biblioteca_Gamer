@@ -1,294 +1,471 @@
+"""
+Interface (Tkinter + ttkbootstrap). Cada tela é uma função que redesenha a janela principal.
+"""
+
+import csv
+import tkinter as tk
+from tkinter import filedialog
+
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
-import tkinter as tk
-from tkinter import ttk
-from PIL import Image, ImageTk
-from ttkbootstrap.dialogs import Messagebox
+from ttkbootstrap.dialogs import Messagebox, Querybox
 from ttkbootstrap.localization import MessageCatalog
-from controllers.controller import *
+
+from controllers import controller as ctl
 
 root = None
+atalhos_tela = {}  # atalhos que só valem na tela atual, ex.: {"buscar": função}
+
+TEMAS = ["darkly", "cyborg", "solar", "journal"]
+TEMA_PADRAO = "cyborg"
+
+# (campo, título, largura, alinhamento) das colunas da tabela de jogos
+COLUNAS_JOGOS = [
+    ("nome", "Nome", 230, "w"), ("console", "Plataforma", 130, "center"), ("status", "Status", 110, "center"),
+    ("avaliacao", "Nota", 55, "center"), ("favorito", "Fav", 45, "center"), ("wishlist", "Wishlist", 65, "center"),
+    ("backlog", "Backlog", 65, "center"), ("ano_lancamento", "Ano", 55, "center"), ("horas_jogadas", "Horas", 55, "center"),
+]
+ICONES_LISTA = {"favorito": "⭐", "wishlist": "❤️", "backlog": "🔖"}
+
+
+# ---------------------------------------------------------------- utilidades
 
 def confirma(mensagem):
     # yesno devolve o texto (traduzido) do botão clicado, não um booleano
     return Messagebox.yesno(mensagem, title="Confirmar", parent=root) == MessageCatalog.translate("Yes")
 
-def int_ou_none(texto, campo, minimo=None, maximo=None):
-    """Campo numérico opcional: vazio vira None; inválido lança ValueError com a mensagem pronta."""
-    texto = texto.strip()
-    if not texto: return None
-    try: valor = int(texto)
-    except ValueError: raise ValueError(f"{campo} deve ser um número inteiro.")
-    if minimo is not None and valor < minimo: raise ValueError(f"{campo} não pode ser menor que {minimo}.")
-    if maximo is not None and valor > maximo: raise ValueError(f"{campo} não pode ser maior que {maximo}.")
-    return valor
 
 def tooltip(widget, text):
     tip = tk.Toplevel(widget); tip.withdraw()
     tip.wm_overrideredirect(True)
-    label = tk.Label(tip, text=text, background="#333", foreground="white", padx=6, pady=3); label.pack()
+    tk.Label(tip, text=text, background="#333", foreground="white", padx=6, pady=3).pack()
     def enter(e): tip.wm_geometry(f"+{widget.winfo_rootx()+20}+{widget.winfo_rooty()+40}"); tip.deiconify()
     def leave(e): tip.withdraw()
     widget.bind("<Enter>", enter); widget.bind("<Leave>", leave)
 
-def carregar_icone(nome_arquivo, tamanho=(20,20)):
-    try: img = Image.open(f"imagens/{nome_arquivo}").resize(tamanho); return ImageTk.PhotoImage(img)
-    except: return None
 
-def limpar_frame(): [w.destroy() for w in root.winfo_children()]
+def limpar_frame():
+    atalhos_tela.clear()
+    for w in root.winfo_children():
+        w.destroy()
+
+
+def atalho_global(acao):
+    """Atalho de teclado que é ignorado enquanto houver um diálogo aberto."""
+    def tratar(evento):
+        if root.grab_current() is None:
+            acao()
+    return tratar
+
+
+def selecionado(tree, aviso):
+    """Id (int) da linha selecionada, ou None depois de avisar que nada está selecionado."""
+    sel = tree.selection()
+    if not sel:
+        Messagebox.show_warning(aviso, title="Aviso", parent=root)
+        return None
+    return int(sel[0])
+
+
+# ---------------------------------------------------------------- menu principal
 
 def barra_progresso(frm):
-    todos = listar_jogos()
-    total = len(todos)
-    zerados = sum(1 for r in todos if r[3] and "zerad" in r[3].lower())
+    zerados, total = ctl.resumo_progresso()
     if total > 0:
         tb.Meter(frm, bootstyle=SUCCESS, subtext="Zerados", amountused=zerados, amounttotal=total,
-            textfont="Arial 10 bold", stripethickness=7).pack(pady=10)
+            textfont="Arial 10 bold", stripethickness=7, metersize=170).pack(pady=10)
+
 
 def exibe_ranking_favoritos():
-    popup = tb.Toplevel(root)
-    popup.title("Top 5 Jogos Favoritos")
-    top5 = ranking_favoritos()
-    tb.Label(popup, text="⭐ TOP 5 Favoritos", font=("Arial", 13, "bold")).pack()
-    for nome, console, nota in top5:
-        tb.Label(popup, text=f"{nome} ({console}) — Nota: {nota}").pack(anchor='w', padx=8, pady=2)
+    popup = tb.Toplevel(master=root, title="Top 5 Jogos Favoritos", resizable=(False, False))
+    popup.transient(root)
+    corpo = tb.Frame(popup, padding=16); corpo.pack(fill="both", expand=True)
+    tb.Label(corpo, text="⭐ TOP 5 Favoritos", font=("Arial", 13, "bold")).pack(pady=(0, 8))
+    top5 = ctl.ranking_favoritos()
+    if not top5:
+        tb.Label(corpo, text="Nenhum favorito ainda.\nMarque jogos com ⭐ para vê-los aqui.", justify="center").pack()
+    for posicao, jogo in enumerate(top5, start=1):
+        nota = f"Nota: {jogo['avaliacao']}" if jogo["avaliacao"] is not None else "sem nota"
+        tb.Label(corpo, text=f"{posicao}. {jogo['nome']} ({jogo['console'] or '-'}) — {nota}").pack(anchor="w", pady=2)
+    tb.Button(corpo, text="Fechar", bootstyle=SECONDARY, command=popup.destroy).pack(pady=(12, 0))
+    popup.bind("<Escape>", lambda e: popup.destroy())
+    popup.place_window_center()
+
+
+def alternar_tema():
+    atual = root.style.theme.name
+    novo = TEMAS[(TEMAS.index(atual) + 1) % len(TEMAS)] if atual in TEMAS else TEMA_PADRAO
+    root.style.theme_use(novo)
+    ctl.gravar_config("tema", novo)
+
 
 def menu_principal():
     limpar_frame()
     frm = tb.Frame(root)
     frm.pack(fill="both", expand=True)
-    tk.Label(frm, text="🎮 Biblioteca Gamer", font=('Arial', 22, 'bold')).pack(pady=20)
+    tb.Label(frm, text="🎮 Biblioteca Gamer", font=('Arial', 22, 'bold')).pack(pady=20)
     tb.Button(frm, text="Consoles/Plataformas", width=25, bootstyle=PRIMARY, command=tela_consoles).pack(pady=8)
     tb.Button(frm, text="Jogos", width=25, bootstyle=SUCCESS, command=tela_jogos).pack(pady=8)
     tb.Button(frm, text="Ver Ranking Favoritos", width=25, bootstyle=WARNING, command=exibe_ranking_favoritos).pack(pady=6)
     tb.Button(frm, text="Sair", width=25, bootstyle=DANGER, command=root.destroy).pack(pady=15)
-    temas = ["darkly", "cyborg", "solar", "journal"]
-    def alternar_tema():
-        atual = root.style.theme.name; idx = (temas.index(atual)+1)%len(temas) if atual in temas else 0; root.style.theme_use(temas[idx])
     tb.Button(frm, text="Alternar Tema", bootstyle=SECONDARY, command=alternar_tema).pack(pady=4)
     barra_progresso(frm)
-    root.bind_all('<Control-n>', lambda e: tela_jogos())
-    root.bind_all('<Control-q>', lambda e: root.destroy())
-    root.bind_all('<Control-m>', lambda e: menu_principal())
+    tb.Label(frm, text="Ctrl+N novo jogo   •   Ctrl+M menu   •   Ctrl+Q sair", bootstyle=SECONDARY).pack(side="bottom", pady=10)
+
+
+# ---------------------------------------------------------------- consoles
 
 def tela_consoles():
     limpar_frame()
     frm = tb.LabelFrame(root, text="Cadastro e gerenciamento de plataformas/consoles", bootstyle=PRIMARY)
-    frm.pack(fill="x", padx=20, pady=20, ipadx=8, ipady=8)
-    tb.Label(frm, text="Nome da plataforma*", font=("Arial", 11, "bold")).pack(anchor="w", pady=(4,0))
+    frm.pack(fill="both", expand=True, padx=20, pady=20, ipadx=8, ipady=8)
+    tb.Label(frm, text="Nome da plataforma*", font=("Arial", 11, "bold")).pack(anchor="w", pady=(4, 0))
     nome_var = tk.StringVar()
-    entry_console = tb.Entry(frm, textvariable=nome_var, width=30, bootstyle=INFO)
-    entry_console.pack(fill="x", padx=5, pady=4)
-    msg = tk.StringVar(value=""); label_feedback = tb.Label(frm, textvariable=msg, bootstyle=SUCCESS); label_feedback.pack(anchor="w", pady=(2,7))
-    def acao_cadastrar():
-        nome = nome_var.get().strip()
-        if not nome:
-            label_feedback.config(bootstyle=DANGER); msg.set("Preencha o nome da plataforma."); return
-        if cadastrar_console(nome):
-            label_feedback.config(bootstyle=SUCCESS); msg.set(f"Plataforma '{nome}' cadastrada!"); nome_var.set(""); atualizar_lista()
-        else:
-            label_feedback.config(bootstyle=DANGER); msg.set("Nome já existe ou inválido.")
-    btn_cadastrar = tb.Button(frm, text="Cadastrar", bootstyle=SUCCESS, command=acao_cadastrar)
-    btn_cadastrar.pack(pady=8); tooltip(btn_cadastrar, "Cadastrar nova plataforma")
-    tb.Separator(frm, orient="horizontal").pack(fill="x", pady=8)
-    tb.Label(frm, text="Plataformas cadastradas:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(5,2))
-    tree = tb.Treeview(frm, columns=("ID", "Nome"), show="headings", bootstyle=PRIMARY)
-    tree.heading("ID", text="ID"); tree.column("ID", width=50)
-    tree.heading("Nome", text="Nome"); tree.column("Nome", width=200)
-    tree.pack(fill="x", pady=4)
+    linha_nome = tb.Frame(frm); linha_nome.pack(fill="x", pady=4)
+    entry_console = tb.Entry(linha_nome, textvariable=nome_var, bootstyle=INFO)
+    entry_console.pack(side="left", fill="x", expand=True, padx=(5, 8))
+    msg = tk.StringVar(value="")
+    label_feedback = tb.Label(frm, textvariable=msg, bootstyle=SUCCESS)
+    def feedback(texto, estilo=SUCCESS):
+        label_feedback.config(bootstyle=estilo); msg.set(texto)
+
     def atualizar_lista():
         tree.delete(*tree.get_children())
-        for id_console, nome in buscar_consoles():
-            tree.insert("", "end", iid=id_console, values=(id_console, nome))
-    def remover_sel():
-        sel = tree.selection()
-        if not sel:
-            Messagebox.show_warning("Selecione uma plataforma!", title="Aviso", parent=root); return
-        idc = int(sel[0])
-        if confirma("Remover plataforma também apagará os jogos associados. Continuar?"):
-            remover_console(idc); atualizar_lista(); msg.set("Plataforma removida.")
-    btn_remover = tb.Button(frm, text="Remover selecionada", bootstyle=DANGER, command=remover_sel)
-    btn_remover.pack(pady=(0,8)); tooltip(btn_remover, "Remove a plataforma e todos os jogos nela")
-    voltar = tb.Button(frm, text="Voltar ao menu", bootstyle=SECONDARY, command=menu_principal)
-    voltar.pack(); atualizar_lista()
+        for console in ctl.buscar_consoles():
+            tree.insert("", "end", iid=console["id"], values=(console["nome"], console["total_jogos"]))
 
-def tela_jogos():
-    limpar_frame()
-    frm = tb.Frame(root); frm.pack(fill="both", expand=True, padx=25, pady=17)
-    consoles = buscar_consoles(); nomes_consoles = [nome for _, nome in consoles]
-    sem_console = "Escolha a plataforma..."
-    editando = {"id": None}  # id do jogo carregado no formulário; None = cadastro novo
-    jogos_listados = {}      # id -> linha de listar_jogos() exibida na tabela
-    # Formulário em duas colunas
-    form = tb.Frame(frm); form.pack(fill="x")
-    form.columnconfigure(0, weight=1); form.columnconfigure(1, weight=1)
-    # Bloco dados básicos
-    bloco_dados = tb.LabelFrame(form, text="Dados do Jogo", bootstyle=INFO); bloco_dados.grid(row=0, column=0, sticky="nsew", padx=8, pady=6)
-    nome_var = tk.StringVar()
-    tb.Label(bloco_dados, text="Nome*", font=("Arial", 11, "bold")).grid(row=0, column=0, sticky="w", pady=3)
-    entry_nome = tb.Entry(bloco_dados, textvariable=nome_var, width=28, bootstyle=PRIMARY)
-    entry_nome.grid(row=0, column=1, padx=6, pady=3)
-    tb.Label(bloco_dados, text="Plataforma*", font=("Arial", 11, "bold")).grid(row=1, column=0, sticky="w")
-    console_var = tk.StringVar(value=sem_console)
-    combo = tb.Combobox(bloco_dados, textvariable=console_var, values=nomes_consoles, font=("Arial", 10), bootstyle=PRIMARY, width=25,
-        state="readonly" if nomes_consoles else "disabled")
-    combo.grid(row=1, column=1, padx=6, pady=3)
-    tooltip(combo, "Selecione uma plataforma cadastrada")
-    bloco_dados.columnconfigure(1, weight=1)
-    # Bloco status/listas
-    bloco_status = tb.LabelFrame(form, text="Status & Listas", bootstyle=PRIMARY); bloco_status.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
-    status_var = tk.StringVar(value=STATUS_PADRAO); favorito_var = tk.IntVar(); wishlist_var = tk.IntVar(); backlog_var = tk.IntVar()
-    tb.Label(bloco_status, text="Status:").grid(row=0, column=0, sticky="w")
-    tb.Combobox(bloco_status, textvariable=status_var, values=STATUS_JOGO, state="readonly", width=18).grid(row=0, column=1, padx=3, pady=2, sticky="w")
-    tb.Checkbutton(bloco_status, text="Favorito ⭐", variable=favorito_var, bootstyle=WARNING).grid(row=1, column=0)
-    tb.Checkbutton(bloco_status, text="Wishlist ❤️", variable=wishlist_var, bootstyle=INFO).grid(row=1, column=1)
-    tb.Checkbutton(bloco_status, text="Backlog 🔖", variable=backlog_var, bootstyle=PRIMARY).grid(row=1, column=2)
-    bloco_status.columnconfigure(1, weight=1)
-    # Bloco extras (campos numéricos são StringVar: vazio é permitido e a conversão é validada ao salvar)
-    bloco_extras = tb.LabelFrame(form, text="Extras", bootstyle=SECONDARY); bloco_extras.grid(row=0, column=1, sticky="nsew", padx=8, pady=6)
-    avaliacao_var = tk.StringVar(); ano_var = tk.StringVar(); genero_var = tk.StringVar(); comentario_var = tk.StringVar()
-    tb.Label(bloco_extras, text="Avaliação (1-10):").grid(row=0, column=0, sticky="w")
-    tb.Entry(bloco_extras, textvariable=avaliacao_var, width=6).grid(row=0, column=1, padx=2, sticky="w")
-    tb.Label(bloco_extras, text="Ano lançamento:").grid(row=1, column=0, sticky="w")
-    tb.Entry(bloco_extras, textvariable=ano_var, width=8).grid(row=1, column=1, padx=2, sticky="w")
-    tb.Label(bloco_extras, text="Gênero:").grid(row=2, column=0, sticky="w")
-    tb.Entry(bloco_extras, textvariable=genero_var, width=18).grid(row=2, column=1, padx=2, sticky="w")
-    tb.Label(bloco_extras, text="Comentário:").grid(row=3, column=0, sticky="w")
-    tb.Entry(bloco_extras, textvariable=comentario_var, width=22).grid(row=3, column=1, padx=2, sticky="we")
-    bloco_extras.columnconfigure(1, weight=1)
-    # Bloco progresso
-    bloco_progresso = tb.LabelFrame(form, text="Progresso", bootstyle=SUCCESS); bloco_progresso.grid(row=1, column=1, sticky="nsew", padx=8, pady=4)
-    data_ini_var = tk.StringVar(); data_fim_var = tk.StringVar(); horas_var = tk.StringVar(); progresso_var = tk.StringVar()
-    tb.Label(bloco_progresso, text="Data início (DD/MM/AAAA):").grid(row=0, column=0, sticky="w")
-    tb.Entry(bloco_progresso, textvariable=data_ini_var, width=12).grid(row=0, column=1, padx=2, sticky="w")
-    tb.Label(bloco_progresso, text="Data fim:").grid(row=1, column=0, sticky="w")
-    tb.Entry(bloco_progresso, textvariable=data_fim_var, width=12).grid(row=1, column=1, padx=2, sticky="w")
-    tb.Label(bloco_progresso, text="Horas jogadas:").grid(row=2, column=0, sticky="w")
-    tb.Entry(bloco_progresso, textvariable=horas_var, width=6).grid(row=2, column=1, padx=2, sticky="w")
-    tb.Label(bloco_progresso, text="Progresso/Notas:").grid(row=3, column=0, sticky="w")
-    tb.Entry(bloco_progresso, textvariable=progresso_var, width=30).grid(row=3, column=1, padx=2, sticky="we")
-    bloco_progresso.columnconfigure(1, weight=1)
-    # feedback
-    msg = tk.StringVar(value=""); label_feedback = tb.Label(frm, textvariable=msg, bootstyle=SUCCESS); label_feedback.pack(anchor="w", pady=(2,0))
-    def feedback(texto, estilo=SUCCESS): label_feedback.config(bootstyle=estilo); msg.set(texto)
-    def limpar_form():
-        editando["id"] = None
-        nome_var.set(""); console_var.set(sem_console); status_var.set(STATUS_PADRAO); avaliacao_var.set("")
-        comentario_var.set(""); favorito_var.set(0); ano_var.set(""); genero_var.set("")
-        wishlist_var.set(0); backlog_var.set(0); data_ini_var.set(""); data_fim_var.set("")
-        horas_var.set(""); progresso_var.set("")
-        btn_salvar.config(text="Cadastrar jogo"); btn_cancelar.config(state="disabled")
-    def acao_salvar():
-        nome = nome_var.get().strip()
-        if not nome:
-            feedback("Preencha o nome do jogo.", DANGER); return
-        id_console = next((cid for cid, nome_c in consoles if nome_c == console_var.get()), None)
-        if id_console is None:
-            feedback("Escolha uma plataforma cadastrada.", DANGER); return
+    def acao_cadastrar(evento=None):
         try:
-            avaliacao = int_ou_none(avaliacao_var.get(), "Avaliação", 1, 10)
-            ano = int_ou_none(ano_var.get(), "Ano de lançamento", 0)
-            horas = int_ou_none(horas_var.get(), "Horas jogadas", 0)
-        except ValueError as e:
-            feedback(str(e), DANGER); return
-        dados = (
-            nome, id_console, status_var.get(), avaliacao, comentario_var.get(),
-            favorito_var.get(), ano, genero_var.get(),
-            wishlist_var.get(), backlog_var.get(), data_ini_var.get(), data_fim_var.get(), horas, progresso_var.get()
-        )
-        if editando["id"] is None:
-            cadastrar_jogo(*dados); texto = f"Jogo '{nome}' cadastrado!"
-        else:
-            atualizar_jogo(editando["id"], *dados); texto = f"Jogo '{nome}' atualizado!"
-        limpar_form(); feedback(texto); atualizar_listagem()
-    def acao_cancelar(): limpar_form(); feedback("")
-    barra_acoes = tb.Frame(frm); barra_acoes.pack(fill="x", pady=(8,4), padx=10)
-    btn_salvar = tb.Button(barra_acoes, text="Cadastrar jogo", bootstyle=SUCCESS, command=acao_salvar)
-    btn_salvar.pack(side="right")
-    tooltip(btn_salvar, "Salvar os dados do formulário")
-    btn_cancelar = tb.Button(barra_acoes, text="Cancelar edição", bootstyle=SECONDARY, command=acao_cancelar, state="disabled")
-    btn_cancelar.pack(side="right", padx=6)
-    # --- Listagem com filtros
-    sep = tb.Separator(frm, orient="horizontal"); sep.pack(fill="x", padx=5, pady=6)
-    tb.Label(frm, text="Jogos cadastrados", font=("Arial", 12, "bold")).pack(anchor="w")
-    filtros = tb.Frame(frm); filtros.pack(fill="x", padx=10, pady=(4,2))
+            ctl.salvar_console(nome_var.get())
+        except ctl.ErroValidacao as erro:
+            feedback(str(erro), DANGER); return
+        feedback(f"Plataforma '{nome_var.get().strip()}' cadastrada!"); nome_var.set(""); atualizar_lista()
+
+    def acao_renomear(evento=None):
+        idc = selecionado(tree, "Selecione uma plataforma!")
+        if idc is None: return
+        atual = tree.item(idc, "values")[0]
+        novo = Querybox.get_string("Novo nome da plataforma:", title="Renomear", initialvalue=atual, parent=root)
+        if novo is None or novo.strip() == atual: return
+        try:
+            ctl.salvar_console(novo, idc)
+        except ctl.ErroValidacao as erro:
+            feedback(str(erro), DANGER); return
+        feedback(f"Plataforma renomeada para '{novo.strip()}'."); atualizar_lista()
+
+    def acao_remover(evento=None):
+        idc = selecionado(tree, "Selecione uma plataforma!")
+        if idc is None: return
+        nome, total = tree.item(idc, "values")
+        total = int(total)
+        pergunta = f"Remover a plataforma '{nome}'?"
+        if total:
+            pergunta += f"\n\nOs {total} jogos cadastrados nela também serão apagados." if total > 1 \
+                else "\n\nO jogo cadastrado nela também será apagado."
+        if confirma(pergunta):
+            ctl.remover_console(idc); atualizar_lista(); feedback(f"Plataforma '{nome}' removida.")
+
+    btn_cadastrar = tb.Button(linha_nome, text="Cadastrar", bootstyle=SUCCESS, command=acao_cadastrar)
+    btn_cadastrar.pack(side="left", padx=(0, 5)); tooltip(btn_cadastrar, "Cadastrar nova plataforma (Enter)")
+    entry_console.bind("<Return>", acao_cadastrar)
+    label_feedback.pack(anchor="w", pady=(2, 7))
+    tb.Separator(frm, orient="horizontal").pack(fill="x", pady=8)
+    tb.Label(frm, text="Plataformas cadastradas:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(5, 2))
+    rodape = tb.Frame(frm); rodape.pack(side="bottom", fill="x", pady=(8, 0))
+    tree = tb.Treeview(frm, columns=("Nome", "Jogos"), show="headings", bootstyle=PRIMARY, selectmode="browse")
+    tree.heading("Nome", text="Nome"); tree.column("Nome", width=300, anchor="w")
+    tree.heading("Jogos", text="Jogos"); tree.column("Jogos", width=80, anchor="center")
+    tree.pack(fill="both", expand=True, pady=4)
+    tree.bind("<Double-1>", lambda e: acao_renomear() if tree.identify_row(e.y) else None)
+    tree.bind("<Delete>", acao_remover)
+    btn_renomear = tb.Button(rodape, text="Renomear selecionada", bootstyle=INFO, command=acao_renomear)
+    btn_renomear.pack(side="left"); tooltip(btn_renomear, "Muda o nome da plataforma (ou duplo clique na linha)")
+    btn_remover = tb.Button(rodape, text="Remover selecionada", bootstyle=DANGER, command=acao_remover)
+    btn_remover.pack(side="left", padx=6); tooltip(btn_remover, "Remove a plataforma e todos os jogos nela (Delete)")
+    tb.Button(rodape, text="Voltar ao menu", bootstyle=SECONDARY, command=menu_principal).pack(side="right")
+    atualizar_lista()
+    entry_console.focus_set()
+
+
+# ---------------------------------------------------------------- jogos: formulário
+
+def dialogo_jogo(consoles, jogo=None, ao_salvar=None):
+    """Janela de cadastro (jogo=None) ou edição. ao_salvar(mensagem) é chamada depois de gravar."""
+    dlg = tb.Toplevel(master=root, title="Editar jogo" if jogo else "Novo jogo", resizable=(False, False))
+    dlg.transient(root)
+    corpo = tb.Frame(dlg, padding=14); corpo.pack(fill="both", expand=True)
+    ids_consoles = {c["nome"]: c["id"] for c in consoles}
+
+    def valor(campo, padrao=""):
+        return padrao if jogo is None or jogo[campo] is None else jogo[campo]
+
+    def bloco(titulo, estilo, linha, coluna):
+        frame = tb.LabelFrame(corpo, text=titulo, bootstyle=estilo, padding=8)
+        frame.grid(row=linha, column=coluna, sticky="nsew", padx=6, pady=6)
+        frame.columnconfigure(1, weight=1)
+        return frame
+
+    def campo_texto(frame, linha, rotulo, campo, largura):
+        var = tk.StringVar(value=str(valor(campo)))
+        tb.Label(frame, text=rotulo).grid(row=linha, column=0, sticky="w", pady=3)
+        entry = tb.Entry(frame, textvariable=var, width=largura)
+        entry.grid(row=linha, column=1, sticky="w" if largura < 20 else "we", padx=(8, 0), pady=3)
+        variaveis[campo] = var
+        return entry
+
+    def campo_data(frame, linha, rotulo, campo):
+        tb.Label(frame, text=rotulo).grid(row=linha, column=0, sticky="w", pady=3)
+        seletor = tb.DateEntry(frame, dateformat="%d/%m/%Y", width=12)
+        seletor.grid(row=linha, column=1, sticky="w", padx=(8, 0), pady=3)
+        seletor.entry.delete(0, "end")  # a data é opcional: começa vazia em vez de "hoje"
+        seletor.entry.insert(0, ctl.data_para_br(valor(campo)))
+        datas[campo] = seletor.entry
+
+    variaveis, datas = {}, {}
+
+    dados = bloco("Dados do Jogo", INFO, 0, 0)
+    entry_nome = campo_texto(dados, 0, "Nome*", "nome", 30)
+    tb.Label(dados, text="Plataforma*").grid(row=1, column=0, sticky="w", pady=3)
+    console_var = tk.StringVar(value=valor("console"))
+    tb.Combobox(dados, textvariable=console_var, values=list(ids_consoles), state="readonly", width=28) \
+        .grid(row=1, column=1, sticky="we", padx=(8, 0), pady=3)
+
+    listas = bloco("Status & Listas", PRIMARY, 1, 0)
+    tb.Label(listas, text="Status:").grid(row=0, column=0, sticky="w", pady=3)
+    variaveis["status"] = tk.StringVar(value=valor("status", ctl.STATUS_PADRAO))
+    tb.Combobox(listas, textvariable=variaveis["status"], values=ctl.STATUS_JOGO, state="readonly", width=18) \
+        .grid(row=0, column=1, sticky="w", padx=(8, 0), pady=3)
+    marcadores = tb.Frame(listas); marcadores.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+    for campo, rotulo, estilo in (("favorito", "Favorito ⭐", WARNING), ("wishlist", "Wishlist ❤️", INFO), ("backlog", "Backlog 🔖", PRIMARY)):
+        variaveis[campo] = tk.IntVar(value=valor(campo, 0))
+        tb.Checkbutton(marcadores, text=rotulo, variable=variaveis[campo], bootstyle=estilo).pack(side="left", padx=(0, 12))
+
+    extras = bloco("Extras", SECONDARY, 0, 1)
+    campo_texto(extras, 0, "Avaliação (1-10):", "avaliacao", 6)
+    campo_texto(extras, 1, "Ano lançamento:", "ano_lancamento", 8)
+    campo_texto(extras, 2, "Gênero:", "genero", 26)
+    campo_texto(extras, 3, "Comentário:", "comentario", 26)
+
+    progresso = bloco("Progresso", SUCCESS, 1, 1)
+    campo_data(progresso, 0, "Data início:", "data_inicio")
+    campo_data(progresso, 1, "Data fim:", "data_fim")
+    campo_texto(progresso, 2, "Horas jogadas:", "horas_jogadas", 6)
+    campo_texto(progresso, 3, "Progresso/Notas:", "progresso", 26)
+
+    erro_var = tk.StringVar()
+    tb.Label(corpo, textvariable=erro_var, bootstyle=DANGER).grid(row=2, column=0, columnspan=2, sticky="w", padx=6)
+
+    def salvar(evento=None):
+        campos = {campo: var.get() for campo, var in variaveis.items()}
+        campos.update({campo: entry.get() for campo, entry in datas.items()})
+        campos["id_console"] = ids_consoles.get(console_var.get())
+        try:
+            ctl.salvar_jogo(campos, jogo["id"] if jogo else None)
+        except ctl.ErroValidacao as erro:
+            erro_var.set(str(erro)); return
+        nome = campos["nome"].strip()
+        dlg.destroy()
+        if ao_salvar:
+            ao_salvar(f"Jogo '{nome}' atualizado!" if jogo else f"Jogo '{nome}' cadastrado!")
+
+    botoes = tb.Frame(corpo); botoes.grid(row=3, column=0, columnspan=2, sticky="e", padx=6, pady=(8, 0))
+    tb.Button(botoes, text="Cancelar", bootstyle=SECONDARY, command=dlg.destroy).pack(side="left", padx=6)
+    tb.Button(botoes, text="Salvar alterações" if jogo else "Cadastrar jogo", bootstyle=SUCCESS, command=salvar).pack(side="left")
+    dlg.bind("<Return>", salvar)
+    dlg.bind("<Escape>", lambda e: dlg.destroy())
+    dlg.place_window_center()
+    dlg.wait_visibility()
+    dlg.grab_set()  # modal: a tela de jogos fica bloqueada até salvar ou cancelar
+    entry_nome.focus_set()
+    return dlg
+
+
+# ---------------------------------------------------------------- jogos: listagem
+
+def valor_celula(jogo, campo):
+    valor = jogo[campo]
+    if campo in ICONES_LISTA:
+        return ICONES_LISTA[campo] if valor else ""
+    if campo in ("console", "status"):
+        return valor or "-"
+    return "" if valor is None else valor
+
+
+def ordenar_jogos(jogos, campo, decrescente):
+    """Ordena pela coluna; jogos sem valor nela ficam sempre no fim."""
+    def chave(jogo):
+        valor = jogo[campo]
+        return valor.casefold() if isinstance(valor, str) else valor
+    preenchidos = [j for j in jogos if j[campo] not in (None, "")]
+    vazios = [j for j in jogos if j[campo] in (None, "")]
+    return sorted(preenchidos, key=chave, reverse=decrescente) + vazios
+
+
+def tela_jogos(abrir_novo=False):
+    limpar_frame()
+    frm = tb.Frame(root, padding=(20, 14)); frm.pack(fill="both", expand=True)
+    consoles = ctl.buscar_consoles()
+    ids_consoles = {c["nome"]: c["id"] for c in consoles}
+    jogos_listados = {}  # id -> linha exibida na tabela
+    ordem = {"campo": "nome", "decrescente": False}
+
+    # --- barra de ações
+    acoes = tb.Frame(frm); acoes.pack(fill="x")
+    tb.Label(acoes, text="Jogos cadastrados", font=("Arial", 14, "bold")).pack(side="left")
+    contador = tk.StringVar()
+    tb.Label(acoes, textvariable=contador, bootstyle=SECONDARY).pack(side="left", padx=12)
+
+    # --- filtros
+    filtros = tb.Frame(frm); filtros.pack(fill="x", pady=(10, 4))
     busca_var = tk.StringVar(); f_console_var = tk.StringVar(value="Todas"); f_status_var = tk.StringVar(value="Todos")
-    f_fav_var = tk.IntVar(); f_wish_var = tk.IntVar(); f_back_var = tk.IntVar()
+    marcados = {campo: tk.IntVar() for campo in ICONES_LISTA}
     tb.Label(filtros, text="Buscar:").pack(side="left")
-    tb.Entry(filtros, textvariable=busca_var, width=22).pack(side="left", padx=(4,12))
+    entry_busca = tb.Entry(filtros, textvariable=busca_var, width=22)
+    entry_busca.pack(side="left", padx=(4, 12))
     tb.Label(filtros, text="Plataforma:").pack(side="left")
-    f_console = tb.Combobox(filtros, textvariable=f_console_var, values=["Todas"] + nomes_consoles, state="readonly", width=16)
-    f_console.pack(side="left", padx=(4,12))
+    f_console = tb.Combobox(filtros, textvariable=f_console_var, values=["Todas"] + list(ids_consoles), state="readonly", width=16)
+    f_console.pack(side="left", padx=(4, 12))
     tb.Label(filtros, text="Status:").pack(side="left")
-    f_status = tb.Combobox(filtros, textvariable=f_status_var, values=["Todos"] + STATUS_JOGO, state="readonly", width=13)
-    f_status.pack(side="left", padx=(4,12))
-    # Rodapé antes da tabela para ela ocupar o espaço que sobrar
-    rodape = tb.Frame(frm); rodape.pack(side="bottom", fill="x", pady=(7,2), padx=9)
-    area_tabela = tb.Frame(frm); area_tabela.pack(fill="both", expand=True, padx=10, pady=3)
-    cols = ("ID", "Nome", "Plataforma", "Status", "Nota", "Fav", "Wishlist", "Backlog", "Ano")
-    tree = tb.Treeview(area_tabela, columns=cols, show="headings", bootstyle=INFO, selectmode="browse", height=6)
-    for col in cols:
-        tree.heading(col, text=col); tree.column(col, width=70, anchor="center")
-    tree.column("Nome", width=240, anchor="w"); tree.column("Plataforma", width=130); tree.column("Status", width=110)
+    # status fora da lista fixa (bancos antigos) também entram no filtro, para poderem ser achados
+    status_extras = [s for s in ctl.status_em_uso() if s not in ctl.STATUS_JOGO]
+    f_status = tb.Combobox(filtros, textvariable=f_status_var, values=["Todos"] + ctl.STATUS_JOGO + status_extras, state="readonly", width=13)
+    f_status.pack(side="left", padx=(4, 12))
+
+    # --- rodapé e tabela (rodapé primeiro, para a tabela ocupar o espaço que sobrar)
+    rodape = tb.Frame(frm); rodape.pack(side="bottom", fill="x", pady=(8, 0))
+    msg = tk.StringVar()
+    label_feedback = tb.Label(frm, textvariable=msg, bootstyle=SUCCESS); label_feedback.pack(side="bottom", anchor="w", pady=(4, 0))
+    def feedback(texto, estilo=SUCCESS):
+        label_feedback.config(bootstyle=estilo); msg.set(texto)
+    area_tabela = tb.Frame(frm); area_tabela.pack(fill="both", expand=True, pady=3)
+    tree = tb.Treeview(area_tabela, columns=[c[0] for c in COLUNAS_JOGOS], show="headings", bootstyle=INFO, selectmode="browse")
+    for campo, titulo, largura, alinhamento in COLUNAS_JOGOS:
+        tree.column(campo, width=largura, anchor=alinhamento)
     rolagem = tb.Scrollbar(area_tabela, orient="vertical", command=tree.yview); tree.configure(yscrollcommand=rolagem.set)
     rolagem.pack(side="right", fill="y"); tree.pack(side="left", fill="both", expand=True)
+
     def atualizar_listagem(*_):
-        id_console = next((cid for cid, nome_c in consoles if nome_c == f_console_var.get()), None)
-        status = f_status_var.get() if f_status_var.get() in STATUS_JOGO else None
-        jogos = listar_jogos(
-            filtro_console=id_console, filtro_status=status, apenas_favoritos=f_fav_var.get(),
-            apenas_wishlist=f_wish_var.get(), apenas_backlog=f_back_var.get(), busca_nome=busca_var.get()
+        jogos = ctl.listar_jogos(
+            filtro_console=ids_consoles.get(f_console_var.get()),
+            filtro_status=None if f_status_var.get() == "Todos" else f_status_var.get(),
+            apenas_favoritos=marcados["favorito"].get(), apenas_wishlist=marcados["wishlist"].get(),
+            apenas_backlog=marcados["backlog"].get(), busca_nome=busca_var.get()
         )
+        jogos = ordenar_jogos(jogos, ordem["campo"], ordem["decrescente"])
+        selecionado_antes = tree.selection()
         jogos_listados.clear(); tree.delete(*tree.get_children())
-        for r in jogos:
-            jogos_listados[r[0]] = r
-            tree.insert("", "end", iid=r[0], values=(
-                r[0], r[1], r[2] or "-", r[3] or "-", r[4] if r[4] is not None else "",
-                "⭐" if r[5] else "", "❤️" if r[6] else "", "🔖" if r[7] else "", r[12] or ""
-            ))
-    tb.Checkbutton(filtros, text="⭐", variable=f_fav_var, bootstyle=WARNING, command=atualizar_listagem).pack(side="left", padx=4)
-    tb.Checkbutton(filtros, text="❤️", variable=f_wish_var, bootstyle=INFO, command=atualizar_listagem).pack(side="left", padx=4)
-    tb.Checkbutton(filtros, text="🔖", variable=f_back_var, bootstyle=PRIMARY, command=atualizar_listagem).pack(side="left", padx=4)
+        for jogo in jogos:
+            jogos_listados[jogo["id"]] = jogo
+            tree.insert("", "end", iid=jogo["id"], values=[valor_celula(jogo, c[0]) for c in COLUNAS_JOGOS])
+        if selecionado_antes and tree.exists(selecionado_antes[0]):
+            tree.selection_set(selecionado_antes[0])
+        for campo, titulo, _, _ in COLUNAS_JOGOS:
+            seta = (" ▼" if ordem["decrescente"] else " ▲") if campo == ordem["campo"] else ""
+            tree.heading(campo, text=titulo + seta, command=lambda c=campo: ordenar_por(c))
+        total = ctl.contar_jogos()
+        contador.set(f"{len(jogos)} de {total} jogos" if len(jogos) != total else f"{total} jogos")
+
+    def ordenar_por(campo):
+        ordem["decrescente"] = not ordem["decrescente"] if ordem["campo"] == campo else False
+        ordem["campo"] = campo
+        atualizar_listagem()
+
+    def limpar_filtros():
+        busca_var.set(""); f_console_var.set("Todas"); f_status_var.set("Todos")
+        for var in marcados.values(): var.set(0)
+        atualizar_listagem()
+
+    for campo, icone in ICONES_LISTA.items():
+        chk = tb.Checkbutton(filtros, text=icone, variable=marcados[campo], command=atualizar_listagem)
+        chk.pack(side="left", padx=4); tooltip(chk, f"Mostrar só {campo}")
+    tb.Button(filtros, text="Limpar filtros", bootstyle=(SECONDARY, OUTLINE), command=limpar_filtros).pack(side="left", padx=(12, 0))
     busca_var.trace_add("write", atualizar_listagem)
     f_console.bind("<<ComboboxSelected>>", atualizar_listagem); f_status.bind("<<ComboboxSelected>>", atualizar_listagem)
-    def jogo_selecionado():
-        sel = tree.selection()
-        if not sel:
-            Messagebox.show_warning("Selecione um jogo na lista!", title="Aviso", parent=root); return None
-        return jogos_listados[int(sel[0])]
-    def acao_editar():
-        r = jogo_selecionado()
-        if r is None: return
-        txt = lambda v: "" if v is None else str(v)
-        editando["id"] = r[0]
-        nome_var.set(r[1]); console_var.set(r[2] if r[2] in nomes_consoles else sem_console); status_var.set(r[3] or STATUS_PADRAO)
-        avaliacao_var.set(txt(r[4])); favorito_var.set(r[5] or 0); wishlist_var.set(r[6] or 0); backlog_var.set(r[7] or 0)
-        data_ini_var.set(txt(r[8])); data_fim_var.set(txt(r[9])); horas_var.set(txt(r[10])); progresso_var.set(txt(r[11]))
-        ano_var.set(txt(r[12])); genero_var.set(txt(r[13])); comentario_var.set(txt(r[14]))
-        btn_salvar.config(text="Salvar alterações"); btn_cancelar.config(state="normal")
-        feedback(f"Editando '{r[1]}'.", INFO); entry_nome.focus_set()
-    def acao_remover():
-        r = jogo_selecionado()
-        if r is None: return
-        if confirma(f"Remover o jogo '{r[1]}'?"):
-            remover_jogo(r[0])
-            if editando["id"] == r[0]: limpar_form()
-            atualizar_listagem(); feedback(f"Jogo '{r[1]}' removido.")
-    def duplo_clique(e):
-        if tree.identify_row(e.y): acao_editar()
+
+    def apos_salvar(mensagem):
+        atualizar_listagem(); feedback(mensagem)
+
+    def acao_novo(evento=None):
+        if not consoles:
+            Messagebox.show_warning("Cadastre ao menos uma plataforma antes de adicionar jogos.", title="Aviso", parent=root); return
+        dialogo_jogo(consoles, ao_salvar=apos_salvar)
+
+    def acao_editar(evento=None):
+        id_jogo = selecionado(tree, "Selecione um jogo na lista!")
+        if id_jogo is not None:
+            dialogo_jogo(consoles, jogos_listados[id_jogo], ao_salvar=apos_salvar)
+
+    def acao_remover(evento=None):
+        id_jogo = selecionado(tree, "Selecione um jogo na lista!")
+        if id_jogo is None: return
+        nome = jogos_listados[id_jogo]["nome"]
+        if confirma(f"Remover o jogo '{nome}'?"):
+            ctl.remover_jogo(id_jogo); atualizar_listagem(); feedback(f"Jogo '{nome}' removido.")
+
+    def acao_exportar():
+        caminho = filedialog.asksaveasfilename(parent=root, title="Exportar jogos", defaultextension=".csv",
+            initialfile="biblioteca_gamer.csv", filetypes=[("CSV", "*.csv")])
+        if not caminho: return
+        try:
+            total = ctl.exportar_csv(caminho)
+        except OSError as erro:
+            Messagebox.show_error(f"Não foi possível gravar o arquivo:\n{erro}", title="Erro", parent=root); return
+        feedback(f"{total} jogos exportados para {caminho}")
+
+    def acao_importar():
+        caminho = filedialog.askopenfilename(parent=root, title="Importar jogos", filetypes=[("CSV", "*.csv")])
+        if not caminho: return
+        try:
+            importados, duplicados, erros = ctl.importar_csv(caminho)
+        except (OSError, UnicodeDecodeError, csv.Error, ctl.ErroValidacao) as erro:
+            Messagebox.show_error(f"Não foi possível importar o arquivo:\n{erro}", title="Erro", parent=root); return
+        resumo = f"{importados} jogos importados, {duplicados} já existiam."
+        if erros:
+            detalhes = "\n".join(erros[:10]) + (f"\n... e mais {len(erros) - 10}." if len(erros) > 10 else "")
+            Messagebox.show_warning(f"{resumo}\n\n{len(erros)} linhas foram ignoradas:\n{detalhes}", title="Importação", parent=root)
+        tela_jogos()  # redesenha: a importação pode ter criado plataformas
+        atalhos_tela["feedback"](resumo)
+
+    def duplo_clique(evento):
+        if tree.identify_row(evento.y): acao_editar()
     tree.bind("<Double-1>", duplo_clique)
+    tree.bind("<Return>", acao_editar)
+    tree.bind("<Delete>", acao_remover)
+
+    btn_novo = tb.Button(rodape, text="Novo jogo", bootstyle=SUCCESS, command=acao_novo)
+    btn_novo.pack(side="left"); tooltip(btn_novo, "Cadastrar um jogo (Ctrl+N)")
     btn_editar = tb.Button(rodape, text="Editar selecionado", bootstyle=INFO, command=acao_editar)
-    btn_editar.pack(side="left"); tooltip(btn_editar, "Carrega o jogo no formulário (ou dê duplo clique na linha)")
+    btn_editar.pack(side="left", padx=6); tooltip(btn_editar, "Abre o jogo para edição (Enter ou duplo clique na linha)")
     btn_remover = tb.Button(rodape, text="Remover selecionado", bootstyle=DANGER, command=acao_remover)
-    btn_remover.pack(side="left", padx=6); tooltip(btn_remover, "Remove o jogo selecionado")
-    voltar = tb.Button(rodape, text="Voltar ao menu", bootstyle=SECONDARY, command=menu_principal)
-    voltar.pack(side="right")
+    btn_remover.pack(side="left"); tooltip(btn_remover, "Remove o jogo selecionado (Delete)")
+    tb.Button(rodape, text="Voltar ao menu", bootstyle=SECONDARY, command=menu_principal).pack(side="right")
+    btn_importar = tb.Button(rodape, text="Importar CSV", bootstyle=(SECONDARY, OUTLINE), command=acao_importar)
+    btn_importar.pack(side="right", padx=6); tooltip(btn_importar, "Adiciona os jogos de um CSV exportado pelo app")
+    btn_exportar = tb.Button(rodape, text="Exportar CSV", bootstyle=(SECONDARY, OUTLINE), command=acao_exportar)
+    btn_exportar.pack(side="right"); tooltip(btn_exportar, "Salva uma cópia de todos os jogos (backup / Excel)")
+
+    atalhos_tela.update(buscar=entry_busca.focus_set, novo=acao_novo, feedback=feedback)
     atualizar_listagem()
+    if abrir_novo:
+        acao_novo()
+
+
+# ---------------------------------------------------------------- inicialização
+
+def atalho_novo_jogo():
+    # na tela de jogos abre o formulário direto; em qualquer outra, vai para ela antes
+    atalhos_tela["novo"]() if "novo" in atalhos_tela else tela_jogos(abrir_novo=True)
+
 
 def iniciar():
     global root
-    root = tb.Window(themename="cyborg")
-    root.title("Biblioteca Gamer")
-    root.geometry("1100x800")
+    tema = ctl.ler_config("tema", TEMA_PADRAO)
+    root = tb.Window(title="Biblioteca Gamer", themename=tema if tema in TEMAS else TEMA_PADRAO,
+        size=(1000, 680), minsize=(900, 560))
+    root.place_window_center()
+    root.bind_all('<Control-n>', atalho_global(atalho_novo_jogo))
+    root.bind_all('<Control-q>', atalho_global(root.destroy))
+    root.bind_all('<Control-m>', atalho_global(menu_principal))
+    root.bind_all('<Control-f>', atalho_global(lambda: atalhos_tela.get("buscar", lambda: None)()))
     menu_principal()
     root.mainloop()
