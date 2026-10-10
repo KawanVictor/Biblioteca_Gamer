@@ -2,6 +2,8 @@
 
 Uma aplicação desktop para gerenciar a sua coleção de jogos e consoles — rápida, fácil e expansível.
 
+![Tela de jogos, com a lista, os filtros e a capa do jogo selecionado](docs/imagens/jogos.png)
+
 ## ✨ Funcionalidades
 
 - Cadastro, renomeação e remoção de consoles/plataformas.
@@ -15,6 +17,22 @@ Uma aplicação desktop para gerenciar a sua coleção de jogos e consoles — r
 - Ranking dos 5 favoritos mais bem avaliados e barra de progresso dos jogos zerados.
 - Backup automático do banco ao fechar, e exportação/importação em CSV.
 - Quatro temas visuais; o app lembra o último escolhido.
+
+## Telas
+
+As imagens usam uma coleção de exemplo.
+
+**Formulário do jogo** — cadastro e edição, com o botão que busca ano, gênero e capa na Steam.
+
+![Formulário de edição de um jogo](docs/imagens/formulario.png)
+
+**Estatísticas** — totais do acervo e tabelas por status, plataforma, ano, gênero e horas.
+
+![Tela de estatísticas](docs/imagens/estatisticas.png)
+
+**Menu principal** — acesso às telas e progresso dos jogos zerados.
+
+![Menu principal](docs/imagens/menu.png)
 
 ## Como rodar
 
@@ -100,6 +118,7 @@ Ao abrir um banco criado por uma versão anterior do app, ele é atualizado auto
 - `controllers/steam.py` — consultas à Steam.
 - `database/db.py` — esquema, migrações, backup e consultas SQLite.
 - `assets/` — ícone do app (`gerar_icone.py` redesenha o `.ico`).
+- `docs/imagens/` — capturas de tela usadas neste README.
 - `tests/` — testes automatizados. Rode com `python -m unittest` na raiz do projeto; eles não usam a internet nem o seu banco.
 
 ## Tecnologias
