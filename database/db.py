@@ -6,11 +6,33 @@ As consultas devolvem sqlite3.Row, então os campos são lidos pelo nome (jogo["
 import os
 import shutil
 import sqlite3
+import sys
 from contextlib import contextmanager
 from datetime import datetime
 
-# Sempre ao lado do projeto, independente da pasta de onde o app é aberto.
-CAMINHO_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "biblioteca_gamer.db")
+def _pasta_padrao():
+    """Onde ficam banco, capas e backups, independente da pasta de onde o app é aberto."""
+    pasta = os.environ.get("BIBLIOTECA_GAMER_DADOS")  # para escolher outro lugar, ex.: uma pasta do OneDrive
+    if not pasta:
+        if getattr(sys, "frozen", False):  # rodando como .exe: a pasta do programa é temporária
+            pasta = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "BibliotecaGamer")
+        else:
+            pasta = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    os.makedirs(pasta, exist_ok=True)
+    return pasta
+
+
+CAMINHO_DB = os.path.join(_pasta_padrao(), "biblioteca_gamer.db")
+BACKUPS_MANTIDOS = 10
+
+
+def pasta_dados(subpasta=None):
+    """Pasta do banco, ou uma subpasta dela (criada se não existir)."""
+    pasta = os.path.dirname(CAMINHO_DB)
+    if subpasta:
+        pasta = os.path.join(pasta, subpasta)
+        os.makedirs(pasta, exist_ok=True)
+    return pasta
 
 STATUS_JOGO = ["Não iniciado", "Jogando", "Pausado", "Zerado", "Abandonado"]
 STATUS_PADRAO = "Jogando"
@@ -18,7 +40,7 @@ STATUS_PADRAO = "Jogando"
 # Campos graváveis de um jogo, na ordem usada em INSERT/UPDATE.
 CAMPOS_JOGO = (
     "nome", "id_console", "status", "avaliacao", "comentario", "favorito", "ano_lancamento",
-    "genero", "wishlist", "backlog", "data_inicio", "data_fim", "horas_jogadas", "progresso"
+    "genero", "wishlist", "backlog", "data_inicio", "data_fim", "horas_jogadas", "progresso", "steam_appid"
 )
 
 FORMATOS_DATA = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y")
@@ -124,8 +146,39 @@ def _migrar_v1(conn):
         )
 
 
-# Uma função por versão do esquema. Para mudar o banco, acrescente _migrar_v2 etc. no fim da lista.
-MIGRACOES = [_migrar_v1]
+def _migrar_v2(conn):
+    # Identificador do jogo na Steam: liga o jogo à capa e à importação da biblioteca.
+    conn.execute("ALTER TABLE jogos ADD COLUMN steam_appid INTEGER")
+
+
+# Uma função por versão do esquema. Para mudar o banco, acrescente _migrar_v3 etc. no fim da lista.
+MIGRACOES = [_migrar_v1, _migrar_v2]
+
+
+def fazer_backup():
+    """
+    Copia o banco para backups/ e apaga as cópias mais antigas, mantendo BACKUPS_MANTIDOS.
+    Não faz nada se o banco está vazio ou não mudou desde o último backup. Devolve o caminho criado ou None.
+    """
+    if not os.path.exists(CAMINHO_DB):
+        return None
+    with conecta() as conn:
+        if not conn.execute("SELECT 1 FROM consoles UNION ALL SELECT 1 FROM jogos LIMIT 1").fetchone():
+            return None
+    pasta = pasta_dados("backups")
+    existentes = sorted(f for f in os.listdir(pasta) if f.startswith("biblioteca_gamer-") and f.endswith(".db"))
+    if existentes and os.path.getmtime(os.path.join(pasta, existentes[-1])) >= os.path.getmtime(CAMINHO_DB):
+        return None
+    destino = os.path.join(pasta, f"biblioteca_gamer-{datetime.now():%Y%m%d-%H%M%S}.db")
+    origem = sqlite3.connect(CAMINHO_DB)
+    copia = sqlite3.connect(destino)
+    try:
+        origem.backup(copia)
+    finally:
+        copia.close(); origem.close()
+    for antigo in (existentes + [os.path.basename(destino)])[:-BACKUPS_MANTIDOS]:
+        os.remove(os.path.join(pasta, antigo))
+    return destino
 
 
 def cria_tabelas():
@@ -193,6 +246,15 @@ def cadastrar_jogo(campos):
         ).lastrowid
 
 
+def cadastrar_jogos(lista_campos):
+    """Vários jogos em uma transação só (importações grandes)."""
+    with conecta() as conn:
+        conn.executemany(
+            f"INSERT INTO jogos ({', '.join(CAMPOS_JOGO)}) VALUES ({', '.join('?' * len(CAMPOS_JOGO))})",
+            [[campos[c] for c in CAMPOS_JOGO] for campos in lista_campos]
+        )
+
+
 def atualizar_jogo(id_jogo, campos):
     with conecta() as conn:
         conn.execute(
@@ -212,6 +274,26 @@ def existe_jogo(nome, id_console, ignorar_id=None):
             "SELECT 1 FROM jogos WHERE nome = ? COLLATE NOCASE AND id_console IS ? AND id IS NOT ?",
             (nome, id_console, ignorar_id)
         ).fetchone() is not None
+
+
+def buscar_jogo(id_jogo):
+    with conecta() as conn:
+        return conn.execute("""
+            SELECT jogos.*, consoles.nome AS console
+            FROM jogos LEFT JOIN consoles ON jogos.id_console = consoles.id
+            WHERE jogos.id = ?
+        """, (id_jogo,)).fetchone()
+
+
+def ids_jogos_do_console(id_console):
+    with conecta() as conn:
+        return [r[0] for r in conn.execute("SELECT id FROM jogos WHERE id_console = ?", (id_console,))]
+
+
+def atualizar_dados_steam(id_jogo, steam_appid, horas_jogadas):
+    """Usado pela importação da Steam em jogos que já existem: grava o appid e as horas, sem mexer no resto."""
+    with conecta() as conn:
+        conn.execute("UPDATE jogos SET steam_appid = ?, horas_jogadas = ? WHERE id = ?", (steam_appid, horas_jogadas, id_jogo))
 
 
 def listar_jogos(
@@ -279,6 +361,46 @@ def ranking_favoritos(top_n=5):
             ORDER BY jogos.avaliacao IS NULL, jogos.avaliacao DESC, jogos.nome COLLATE NOCASE
             LIMIT ?
         """, (top_n,)).fetchall()
+
+
+def estatisticas():
+    """Números da tela de estatísticas. A wishlist só entra na contagem 'wishlist': o resto é o acervo."""
+    acervo = "COALESCE(jogos.wishlist, 0) = 0"
+    with conecta() as conn:
+        geral = conn.execute(f"""
+            SELECT COUNT(*) AS jogos, COALESCE(SUM(horas_jogadas), 0) AS horas, AVG(avaliacao) AS nota_media,
+                   COALESCE(SUM(status = 'Zerado'), 0) AS zerados, COALESCE(SUM(backlog = 1), 0) AS backlog,
+                   COALESCE(SUM(favorito = 1), 0) AS favoritos
+            FROM jogos WHERE {acervo}
+        """).fetchone()
+        return {
+            **dict(geral),
+            "wishlist": conn.execute("SELECT COUNT(*) FROM jogos WHERE wishlist = 1").fetchone()[0],
+            "por_status": conn.execute(f"""
+                SELECT COALESCE(NULLIF(status, ''), '(sem status)') AS status, COUNT(*) AS jogos
+                FROM jogos WHERE {acervo} GROUP BY 1 ORDER BY jogos DESC, 1
+            """).fetchall(),
+            "por_plataforma": conn.execute(f"""
+                SELECT consoles.nome AS console, COUNT(*) AS jogos, COALESCE(SUM(jogos.horas_jogadas), 0) AS horas
+                FROM jogos JOIN consoles ON jogos.id_console = consoles.id
+                WHERE {acervo} GROUP BY consoles.id ORDER BY horas DESC, jogos DESC, console
+            """).fetchall(),
+            "zerados_por_ano": conn.execute(f"""
+                SELECT substr(data_fim, 1, 4) AS ano, COUNT(*) AS jogos
+                FROM jogos WHERE {acervo} AND status = 'Zerado' AND data_fim GLOB '[0-9][0-9][0-9][0-9]-*'
+                GROUP BY ano ORDER BY ano DESC
+            """).fetchall(),
+            "por_genero": conn.execute(f"""
+                SELECT genero, COUNT(*) AS jogos, AVG(avaliacao) AS nota_media
+                FROM jogos WHERE {acervo} AND COALESCE(genero, '') != ''
+                GROUP BY genero COLLATE NOCASE ORDER BY jogos DESC, genero LIMIT 10
+            """).fetchall(),
+            "mais_jogados": conn.execute(f"""
+                SELECT jogos.nome, consoles.nome AS console, jogos.horas_jogadas AS horas
+                FROM jogos LEFT JOIN consoles ON jogos.id_console = consoles.id
+                WHERE {acervo} AND jogos.horas_jogadas > 0 ORDER BY horas DESC, jogos.nome LIMIT 5
+            """).fetchall(),
+        }
 
 
 # ---------------------------------------------------------------- preferências

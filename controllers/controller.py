@@ -4,14 +4,23 @@ A interface manda os valores como o usuário digitou; aqui eles são validados e
 """
 
 import csv
+import io
+import os
 from datetime import date
 
+from PIL import Image, UnidentifiedImageError
+
+from controllers import steam
+from controllers.steam import ErroSteam
 from database import db
-from database.db import (
-    STATUS_JOGO, STATUS_PADRAO, cria_tabelas, buscar_consoles, remover_console,
-    listar_jogos, contar_jogos, remover_jogo, status_em_uso, resumo_progresso,
-    ranking_favoritos, ler_config, gravar_config, data_para_br
+# Repassados para a interface, que só conversa com este módulo.
+from database.db import (  # noqa: F401
+    STATUS_JOGO, STATUS_PADRAO, cria_tabelas, buscar_consoles, buscar_jogo,
+    listar_jogos, contar_jogos, status_em_uso, resumo_progresso, estatisticas,
+    ranking_favoritos, ler_config, gravar_config, data_para_br, fazer_backup
 )
+
+TAMANHO_CAPA = (300, 450)
 
 
 class ErroValidacao(Exception):
@@ -86,6 +95,7 @@ def validar_jogo(campos, id_jogo=None):
         "data_fim": data_fim,
         "horas_jogadas": _inteiro(campos.get("horas_jogadas"), "Horas jogadas", 0),
         "progresso": _texto(campos.get("progresso")),
+        "steam_appid": _inteiro(campos.get("steam_appid"), "Steam AppID", 1),
     }
     if db.existe_jogo(nome, id_console, ignorar_id=id_jogo):
         raise JogoDuplicado(f"'{nome}' já está cadastrado nessa plataforma.")
@@ -114,6 +124,108 @@ def salvar_console(nome, id_console=None):
     return id_console
 
 
+def remover_jogo(id_jogo):
+    db.remover_jogo(id_jogo)
+    remover_capa(id_jogo)
+
+
+def remover_console(id_console):
+    """Remove a plataforma e os jogos dela (com as capas)."""
+    ids_jogos = db.ids_jogos_do_console(id_console)
+    db.remover_console(id_console)
+    for id_jogo in ids_jogos:
+        remover_capa(id_jogo)
+
+
+# ---------------------------------------------------------------- capas
+
+def caminho_capa(id_jogo):
+    """Arquivo da capa do jogo (capas/<id>.jpg na pasta de dados). Pode não existir."""
+    return os.path.join(db.pasta_dados("capas"), f"{id_jogo}.jpg")
+
+
+def tem_capa(id_jogo):
+    return os.path.exists(caminho_capa(id_jogo))
+
+
+def salvar_capa(id_jogo, imagem):
+    """imagem: caminho de um arquivo ou os bytes da imagem. É reduzida e gravada como JPEG."""
+    try:
+        with Image.open(io.BytesIO(imagem) if isinstance(imagem, bytes) else imagem) as img:
+            img = img.convert("RGB")
+            img.thumbnail(TAMANHO_CAPA)
+            img.save(caminho_capa(id_jogo), "JPEG", quality=88)
+    except (UnidentifiedImageError, OSError):
+        raise ErroValidacao("O arquivo escolhido não é uma imagem válida.")
+
+
+def remover_capa(id_jogo):
+    if tem_capa(id_jogo):
+        os.remove(caminho_capa(id_jogo))
+
+
+# ---------------------------------------------------------------- Steam
+
+def buscar_na_steam(nome):
+    """Jogos da loja Steam com esse nome: lista de {'appid', 'nome'}. Lança ErroSteam."""
+    if not _texto(nome):
+        raise ErroSteam("Digite o nome do jogo antes de buscar.")
+    return steam.buscar_jogos(nome)
+
+
+def dados_da_steam(appid):
+    """Ano, gênero e capa (bytes ou None) de um jogo da Steam, para preencher o formulário."""
+    dados = steam.detalhes(appid)
+    return {"ano": dados["ano"], "genero": dados["genero"], "capa": steam.baixar_capa(appid, dados["imagem"])}
+
+
+def baixar_capa_da_steam(id_jogo):
+    """Baixa a capa de um jogo que tem Steam AppID e ainda está sem capa. Devolve True se gravou."""
+    jogo = buscar_jogo(id_jogo)
+    if jogo is None or not jogo["steam_appid"] or tem_capa(id_jogo):
+        return False
+    imagem = steam.baixar_capa(jogo["steam_appid"])
+    if imagem is None:
+        return False
+    try:
+        salvar_capa(id_jogo, imagem)
+    except ErroValidacao:
+        return False
+    return True
+
+
+def importar_steam(chave, steam_id, id_console):
+    """
+    Traz a biblioteca de uma conta Steam para a plataforma indicada. Jogos novos entram com as horas
+    jogadas; os que já existem (mesmo appid ou mesmo nome) só têm as horas e o appid atualizados.
+    Devolve (novos, atualizados). Lança ErroSteam.
+    """
+    jogos_steam = steam.biblioteca(chave, steam_id)
+    existentes = listar_jogos(filtro_console=id_console)
+    por_appid = {j["steam_appid"]: j for j in existentes if j["steam_appid"]}
+    por_nome = {j["nome"].casefold(): j for j in existentes}
+    novos, atualizados = [], 0
+    for item in jogos_steam:
+        atual = por_appid.get(item["appid"]) or por_nome.get(item["nome"].casefold())
+        if atual is None:
+            campos = dict.fromkeys(db.CAMPOS_JOGO)
+            campos.update(
+                nome=item["nome"], id_console=id_console, steam_appid=item["appid"],
+                horas_jogadas=item["horas"] or None, status="Jogando" if item["horas"] else "Não iniciado",
+                comentario="", genero="", progresso="", favorito=0, wishlist=0, backlog=0
+            )
+            novos.append(campos)
+            por_nome[item["nome"].casefold()] = campos  # a Steam às vezes repete o mesmo nome
+        elif "id" in atual.keys():
+            horas = max(item["horas"], atual["horas_jogadas"] or 0) or None
+            if horas != atual["horas_jogadas"] or atual["steam_appid"] != item["appid"]:
+                db.atualizar_dados_steam(atual["id"], item["appid"], horas)
+                atualizados += 1
+    db.cadastrar_jogos(novos)
+    gravar_config("steam_chave", chave.strip()); gravar_config("steam_id", steam_id.strip())
+    return len(novos), atualizados
+
+
 # ---------------------------------------------------------------- exportar / importar CSV
 
 # Cabeçalho do CSV -> campo do jogo ("console" é o nome da plataforma).
@@ -122,7 +234,7 @@ COLUNAS_CSV = {
     "Favorito": "favorito", "Wishlist": "wishlist", "Backlog": "backlog",
     "Ano de lançamento": "ano_lancamento", "Gênero": "genero", "Data início": "data_inicio",
     "Data fim": "data_fim", "Horas jogadas": "horas_jogadas", "Progresso": "progresso",
-    "Comentário": "comentario",
+    "Comentário": "comentario", "Steam AppID": "steam_appid",
 }
 _CAMPOS_SIM_NAO = ("favorito", "wishlist", "backlog")
 _CAMPOS_DATA = ("data_inicio", "data_fim")

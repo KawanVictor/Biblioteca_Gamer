@@ -8,9 +8,12 @@ Uma aplicação desktop para gerenciar a sua coleção de jogos e consoles — r
 - Cadastro, edição e remoção de jogos, com plataforma, status, nota, ano, gênero, datas, horas jogadas e comentários.
 - Listas de favoritos ⭐, wishlist ❤️ e backlog 🔖.
 - Tabela com busca por nome, filtros por plataforma, status e listas, e ordenação ao clicar no cabeçalho.
-- Ranking dos 5 favoritos mais bem avaliados.
-- Barra de progresso com os jogos zerados (a wishlist não entra na conta).
-- Exportação e importação em CSV, para backup ou para abrir no Excel.
+- Capa de cada jogo, mostrada ao lado da lista.
+- Preenchimento automático de ano, gênero e capa pela loja da Steam.
+- Importação da biblioteca de uma conta Steam, com as horas jogadas.
+- Tela de estatísticas: horas por plataforma, zerados por ano, gêneros, jogos mais jogados.
+- Ranking dos 5 favoritos mais bem avaliados e barra de progresso dos jogos zerados.
+- Backup automático do banco ao fechar, e exportação/importação em CSV.
 - Quatro temas visuais; o app lembra o último escolhido.
 
 ## Como rodar
@@ -22,7 +25,7 @@ Pré-requisitos: Python 3.10+ (https://python.org/) com pip.
        git clone https://github.com/KawanVictor/Biblioteca_Gamer.git
        cd Biblioteca_Gamer
 
-2. Instale as dependências (de preferência em um ambiente virtual):
+2. Crie o ambiente virtual e instale as dependências:
 
        python -m venv venv
        venv\Scripts\activate
@@ -34,12 +37,17 @@ Pré-requisitos: Python 3.10+ (https://python.org/) com pip.
 
 💡 Cadastre ao menos um console antes de adicionar jogos.
 
+### Gerar o executável (.exe)
+
+Com o ambiente virtual ativado, rode `gerar_exe.bat`. O resultado é `dist\BibliotecaGamer.exe`, que abre com dois cliques e não precisa de Python instalado.
+
 ## Como usar
 
 No menu principal, escolha:
 
 - **Consoles/Plataformas:** cadastre plataformas (ex.: PC, Xbox, PS5...). Duplo clique renomeia; remover uma plataforma apaga também os jogos dela.
 - **Jogos:** use "Novo jogo" para cadastrar. Duplo clique em uma linha (ou "Editar selecionado") abre o jogo para edição.
+- **Estatísticas:** números do acervo (a wishlist fica de fora).
 - **Alternar Tema:** troca entre os temas disponíveis.
 
 Atalhos de teclado:
@@ -54,22 +62,49 @@ Atalhos de teclado:
 | Ctrl+M | Voltar ao menu |
 | Ctrl+Q | Sair |
 
+### Steam
+
+- **Buscar dados na Steam** (no formulário do jogo): digite o nome e clique no botão. O app preenche ano, gênero e capa, sem sobrescrever o que você já digitou. Não precisa de conta nem de chave.
+- **Importar biblioteca da Steam** (botão "Importar / Exportar" da tela de jogos): traz todos os jogos da conta com as horas jogadas. Rodar de novo só atualiza as horas, sem duplicar. Você precisa de:
+  - uma chave da API, criada em https://steamcommunity.com/dev/apikey;
+  - o seu SteamID de 17 números (steamID64);
+  - a opção "Detalhes dos jogos" como pública na privacidade do perfil.
+
+  A chave fica guardada no banco local, em texto simples, para não precisar digitar de novo.
+
+Jogos que têm vínculo com a Steam e estão sem capa têm a capa baixada quando são selecionados na lista.
+
 ## Seus dados
 
-Os dados ficam no arquivo `biblioteca_gamer.db`, na pasta do projeto. Ele não é enviado para o GitHub, então faça backup pelo botão "Exportar CSV" da tela de jogos. "Importar CSV" lê o mesmo formato, cria as plataformas que faltarem e pula os jogos que já existem.
+Tudo fica em uma pasta só:
 
-Ao abrir um banco criado por uma versão anterior do app, ele é atualizado automaticamente e uma cópia do original fica em `biblioteca_gamer.backup-v0.db`.
+| Item | Onde |
+| --- | --- |
+| Banco | `biblioteca_gamer.db` |
+| Capas | `capas\` |
+| Backups automáticos | `backups\` (os 10 mais recentes) |
+
+Essa pasta é a do projeto quando você roda `python main.py`, e `%APPDATA%\BibliotecaGamer` quando usa o `.exe`. Para usar outro lugar (uma pasta do OneDrive, por exemplo), defina a variável de ambiente `BIBLIOTECA_GAMER_DADOS` com o caminho.
+
+Nada disso é enviado para o GitHub. Ao fechar, o app guarda uma cópia do banco em `backups\` se algo mudou. Para restaurar, feche o app e copie o backup desejado por cima de `biblioteca_gamer.db`. As capas não entram no backup.
+
+"Exportar CSV" gera uma planilha com todos os jogos; "Importar CSV" lê o mesmo formato, cria as plataformas que faltarem e pula os jogos que já existem.
+
+Ao abrir um banco criado por uma versão anterior do app, ele é atualizado automaticamente e uma cópia do original fica ao lado dele (`biblioteca_gamer.backup-v0.db`, por exemplo).
 
 ## Estrutura
 
 - `main.py` — ponto de entrada.
 - `views/ui.py` — telas.
-- `controllers/controller.py` — validações, regras e CSV.
-- `database/db.py` — esquema, migrações e consultas SQLite.
-- `tests/` — testes automatizados. Rode com `python -m unittest` na raiz do projeto.
+- `controllers/controller.py` — validações, regras, capas e CSV.
+- `controllers/steam.py` — consultas à Steam.
+- `database/db.py` — esquema, migrações, backup e consultas SQLite.
+- `assets/` — ícone do app (`gerar_icone.py` redesenha o `.ico`).
+- `tests/` — testes automatizados. Rode com `python -m unittest` na raiz do projeto; eles não usam a internet nem o seu banco.
 
 ## Tecnologias
 
 - Python 3.10+
-- Tkinter com ttkbootstrap (interface estilizada)
+- Tkinter com ttkbootstrap 1.14 (interface estilizada)
+- Pillow (capas)
 - SQLite (persistência local e leve)

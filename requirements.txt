@@ -1,1 +1,2 @@
-ttkbootstrap>=1.14,<2
+ttkbootstrap>=1.14,<1.15
+pillow>=10
