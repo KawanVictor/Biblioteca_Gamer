@@ -4,6 +4,7 @@ import io
 import os
 import time
 import tkinter as tk
+from tkinter import filedialog
 import unittest
 from unittest import mock
 
@@ -12,7 +13,7 @@ from PIL import Image
 
 from controllers import controller as ctl
 from tests import TesteComBanco
-from views import ui
+from views import base, consoles, formulario, jogos, ui
 
 
 def descendentes(widget):
@@ -42,26 +43,26 @@ class TesteInterface(TesteComBanco):
     @classmethod
     def setUpClass(cls):
         try:
-            ui.root = tb.Window(themename=ui.TEMA_PADRAO, size=(1000, 680))
+            base.root = tb.Window(themename=base.TEMA_PADRAO, size=(1000, 680))
         except tk.TclError as erro:
             raise unittest.SkipTest(f"sem ambiente gráfico: {erro}")
-        ui.root.bind_all('<Control-n>', ui.atalho_global(ui.atalho_novo_jogo))
+        base.root.bind_all('<Control-n>', base.atalho_global(ui.atalho_novo_jogo))
 
     @classmethod
     def tearDownClass(cls):
-        ui.root.destroy()
+        base.root.destroy()
 
     def setUp(self):
         super().setUp()
-        self.root = ui.root
+        self.root = base.root
         self.avisos, self.perguntas, self.resposta = [], [], True
-        ui.capas_baixando.clear(); ui.capas_sem_steam.clear()
+        jogos.capas_baixando.clear(); jogos.capas_sem_steam.clear()
         def confirma(mensagem):
             self.perguntas.append(mensagem); return self.resposta
         for alvo, nome, substituto in (
-            (ui.Messagebox, "show_warning", lambda m, **k: self.avisos.append(m)),
-            (ui.Messagebox, "show_error", lambda m, **k: self.avisos.append(m)),
-            (ui, "confirma", confirma),
+            (base.Messagebox, "show_warning", lambda m, **k: self.avisos.append(m)),
+            (base.Messagebox, "show_error", lambda m, **k: self.avisos.append(m)),
+            (base, "confirma", confirma),
         ):
             remendo = mock.patch.object(alvo, nome, substituto)
             remendo.start(); self.addCleanup(remendo.stop)
@@ -69,7 +70,7 @@ class TesteInterface(TesteComBanco):
         self.ps5 = ctl.salvar_console("PS5")
 
     def tearDown(self):
-        ui.limpar_frame()
+        base.limpar_frame()
         super().tearDown()
 
     # ---- apoio
@@ -136,7 +137,7 @@ class TesteInterface(TesteComBanco):
         self.assertIn("já existe", textos_variaveis(self.root)[0])
 
         self.selecionar("Switch")
-        with mock.patch.object(ui.Querybox, "get_string", lambda *a, **k: "Nintendo Switch"):
+        with mock.patch.object(consoles.Querybox, "get_string", lambda *a, **k: "Nintendo Switch"):
             botao(self.root, "Renomear selecionada").invoke()
         self.assertEqual(self.nomes(), ["Nintendo Switch", "PC", "PS5"])
 
@@ -268,18 +269,18 @@ class TesteInterface(TesteComBanco):
         self.tres_jogos()
         caminho = os.path.join(self.pasta, "saida.csv")
         ui.tela_jogos()
-        with mock.patch.object(ui.filedialog, "asksaveasfilename", lambda **k: caminho):
+        with mock.patch.object(filedialog, "asksaveasfilename", lambda **k: caminho):
             self.item_do_menu("Exportar CSV")
         self.assertIn("3 jogos exportados", textos_variaveis(self.root)[1])
 
         ctl.remover_console(self.ps5)  # leva o Astro Bot junto
-        with mock.patch.object(ui.filedialog, "askopenfilename", lambda **k: caminho):
+        with mock.patch.object(filedialog, "askopenfilename", lambda **k: caminho):
             self.item_do_menu("Importar CSV")
         self.assertEqual(self.nomes(), ["Astro Bot", "Celeste", "Hades"])
         self.assertEqual(textos_variaveis(self.root)[1], "1 jogos importados, 2 já existiam.")
         self.assertIn("PS5", da_classe(self.root, "TCombobox")[0].cget("values"))  # plataforma recriada
 
-        with mock.patch.object(ui.filedialog, "askopenfilename", lambda **k: ""):
+        with mock.patch.object(filedialog, "askopenfilename", lambda **k: ""):
             self.item_do_menu("Importar CSV")  # cancelou a escolha do arquivo: nada acontece
         self.assertEqual(self.avisos, [])
 
@@ -314,7 +315,7 @@ class TesteInterface(TesteComBanco):
         botao(self.root, "Alternar Tema").invoke()
         self.assertEqual(ctl.ler_config("tema"), "solar")
         self.assertEqual(self.root.style.theme.name, "solar")
-        self.root.style.theme_use(ui.TEMA_PADRAO)
+        self.root.style.theme_use(base.TEMA_PADRAO)
 
     def test_telas_cabem_no_tamanho_minimo_da_janela(self):
         self.tres_jogos()
@@ -345,14 +346,14 @@ class TesteInterface(TesteComBanco):
             buscar.invoke()
         self.assertIn("Nenhum jogo", textos_variaveis(self.dialogo())[0])
         with mock.patch.object(ctl, "buscar_na_steam", return_value=achados), \
-                mock.patch.object(ui, "escolher_jogo_steam", return_value=None), \
+                mock.patch.object(formulario, "escolher_jogo_steam", return_value=None), \
                 mock.patch.object(ctl, "dados_da_steam") as detalhes:
             buscar.invoke()  # desistiu na lista de escolha
         detalhes.assert_not_called()
 
         preencher(entradas[0], "hades"); preencher(entradas[3], "Roguelike"); combos[0].set("PC")
         with mock.patch.object(ctl, "buscar_na_steam", return_value=achados) as busca, \
-                mock.patch.object(ui, "escolher_jogo_steam", return_value=achados[1]), \
+                mock.patch.object(formulario, "escolher_jogo_steam", return_value=achados[1]), \
                 mock.patch.object(ctl, "dados_da_steam", return_value={"ano": 2020, "genero": "Ação, Indie", "capa": self.imagem_de_teste()}):
             buscar.invoke()
         busca.assert_called_once_with("hades")
@@ -371,7 +372,7 @@ class TesteInterface(TesteComBanco):
         entradas, _ = self.campos_dialogo()
         preencher(entradas[0], "Celeste")
         with mock.patch.object(ctl, "buscar_na_steam", return_value=[{"appid": 504230, "nome": "Celeste"}]), \
-                mock.patch.object(ui, "escolher_jogo_steam") as escolher, \
+                mock.patch.object(formulario, "escolher_jogo_steam") as escolher, \
                 mock.patch.object(ctl, "dados_da_steam", return_value={"ano": 2018, "genero": "", "capa": None}):
             botao(self.dialogo(), "Buscar dados na Steam").invoke()
         escolher.assert_not_called()
@@ -387,10 +388,10 @@ class TesteInterface(TesteComBanco):
 
         self.selecionar("Hades"); botao(self.root, "Editar selecionado").invoke()
         self.assertEqual(self.capas_visiveis(self.dialogo()), [])
-        with mock.patch.object(ui.filedialog, "askopenfilename", lambda **k: __file__):
+        with mock.patch.object(filedialog, "askopenfilename", lambda **k: __file__):
             botao(self.dialogo(), "Escolher...").invoke()
         self.assertEqual(textos_variaveis(self.dialogo()), ["O arquivo escolhido não é uma imagem válida."])
-        with mock.patch.object(ui.filedialog, "askopenfilename", lambda **k: arquivo):
+        with mock.patch.object(filedialog, "askopenfilename", lambda **k: arquivo):
             botao(self.dialogo(), "Escolher...").invoke()
         self.assertEqual(len(self.capas_visiveis(self.dialogo())), 1)
         self.assertFalse(ctl.tem_capa(id_jogo))  # só grava ao salvar
@@ -445,7 +446,7 @@ class TesteInterface(TesteComBanco):
             for nome in ("Hades", "Outro", "Hades"):
                 self.selecionar(nome)
                 limite = time.time() + 2
-                while (ui.capas_baixando or time.time() < limite - 1.7) and time.time() < limite:
+                while (jogos.capas_baixando or time.time() < limite - 1.7) and time.time() < limite:
                     self.root.update(); time.sleep(0.05)
         self.assertEqual(baixar.call_count, 1)
 

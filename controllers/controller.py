@@ -10,12 +10,12 @@ from datetime import date
 
 from PIL import Image, UnidentifiedImageError
 
-from controllers import steam
+from controllers import segredo, steam
 from controllers.steam import ErroSteam
 from database import db
 # Repassados para a interface, que só conversa com este módulo.
 from database.db import (  # noqa: F401
-    STATUS_JOGO, STATUS_PADRAO, cria_tabelas, buscar_consoles, buscar_jogo,
+    STATUS_JOGO, STATUS_PADRAO, buscar_consoles, buscar_jogo,
     listar_jogos, contar_jogos, status_em_uso, resumo_progresso, estatisticas,
     ranking_favoritos, ler_config, gravar_config, data_para_br, fazer_backup
 )
@@ -166,6 +166,26 @@ def remover_capa(id_jogo):
 
 # ---------------------------------------------------------------- Steam
 
+def guardar_chave_steam(chave):
+    """Guarda a chave protegida pelo Windows. Onde não há como proteger, ela não é guardada."""
+    gravar_config("steam_chave", segredo.proteger(chave) if chave and segredo.DISPONIVEL else "")
+
+
+def ler_chave_steam():
+    """Chave guardada, ou '' se não há ou se não dá para ler (banco copiado de outro usuário ou máquina)."""
+    valor = ler_config("steam_chave", "")
+    if not valor.startswith(segredo.PREFIXO):
+        return ""
+    return segredo.revelar(valor) or ""
+
+
+def cria_tabelas():
+    """Prepara o banco. Chave da Steam gravada em texto puro por uma versão anterior é regravada protegida."""
+    db.cria_tabelas()
+    antiga = ler_config("steam_chave", "")
+    if antiga and not antiga.startswith(segredo.PREFIXO):
+        guardar_chave_steam(antiga)
+
 def buscar_na_steam(nome):
     """Jogos da loja Steam com esse nome: lista de {'appid', 'nome'}. Lança ErroSteam."""
     if not _texto(nome):
@@ -222,7 +242,7 @@ def importar_steam(chave, steam_id, id_console):
                 db.atualizar_dados_steam(atual["id"], item["appid"], horas)
                 atualizados += 1
     db.cadastrar_jogos(novos)
-    gravar_config("steam_chave", chave.strip()); gravar_config("steam_id", steam_id.strip())
+    guardar_chave_steam(chave.strip()); gravar_config("steam_id", steam_id.strip())
     return len(novos), atualizados
 
 

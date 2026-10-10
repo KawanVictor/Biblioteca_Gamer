@@ -1,5 +1,7 @@
 # Biblioteca Gamer
 
+[![Testes](https://github.com/KawanVictor/Biblioteca_Gamer/actions/workflows/testes.yml/badge.svg)](https://github.com/KawanVictor/Biblioteca_Gamer/actions/workflows/testes.yml)
+
 Uma aplicação desktop para gerenciar a sua coleção de jogos e consoles — rápida, fácil e expansível.
 
 ![Tela de jogos, com a lista, os filtros e a capa do jogo selecionado](docs/imagens/jogos.png)
@@ -88,7 +90,7 @@ Atalhos de teclado:
   - o seu SteamID de 17 números (steamID64);
   - a opção "Detalhes dos jogos" como pública na privacidade do perfil.
 
-  A chave fica guardada no banco local, em texto simples, para não precisar digitar de novo.
+  A chave fica guardada no banco local para não precisar digitar de novo, protegida pelo Windows (DPAPI): só o seu usuário, nesta máquina, consegue lê-la. Se o banco for copiado para outro computador, o app pede a chave de novo. Fora do Windows não há essa proteção, então a chave não é guardada.
 
 Jogos que têm vínculo com a Steam e estão sem capa têm a capa baixada quando são selecionados na lista.
 
@@ -113,9 +115,10 @@ Ao abrir um banco criado por uma versão anterior do app, ele é atualizado auto
 ## Estrutura
 
 - `main.py` — ponto de entrada.
-- `views/ui.py` — telas.
+- `views/` — interface, um módulo por tela: `menu.py`, `consoles.py`, `jogos.py` (lista), `formulario.py`, `importar_steam.py` e `estatisticas.py`. `base.py` tem o que as telas compartilham e `ui.py` cria a janela.
 - `controllers/controller.py` — validações, regras, capas e CSV.
 - `controllers/steam.py` — consultas à Steam.
+- `controllers/segredo.py` — proteção da chave da Steam.
 - `database/db.py` — esquema, migrações, backup e consultas SQLite.
 - `assets/` — ícone do app (`gerar_icone.py` redesenha o `.ico`).
 - `docs/imagens/` — capturas de tela usadas neste README.

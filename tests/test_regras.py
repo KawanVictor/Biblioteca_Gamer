@@ -11,7 +11,7 @@ from unittest import mock
 from PIL import Image
 
 from controllers import controller as ctl
-from controllers import steam
+from controllers import segredo, steam
 from database import db
 from tests import TesteComBanco
 
@@ -395,7 +395,39 @@ class TesteSteam(TesteComBanco):
             "Hollow Knight": ("Não iniciado", None, 367520, None),
         })
         self.assertEqual(ctl.importar_steam(self.CHAVE, self.STEAM_ID, self.pc), (0, 0))  # repetir não muda nada
-        self.assertEqual((ctl.ler_config("steam_chave"), ctl.ler_config("steam_id")), (self.CHAVE, self.STEAM_ID))
+        self.assertEqual((ctl.ler_chave_steam(), ctl.ler_config("steam_id")), (self.CHAVE, self.STEAM_ID))
+
+    @unittest.skipUnless(segredo.DISPONIVEL, "a proteção usa a DPAPI do Windows")
+    def test_chave_e_guardada_protegida_e_nunca_em_texto_puro(self):
+        ctl.guardar_chave_steam(self.CHAVE)
+        gravado = ctl.ler_config("steam_chave")
+        self.assertTrue(gravado.startswith(segredo.PREFIXO))
+        with open(db.CAMINHO_DB, "rb") as arquivo:
+            self.assertNotIn(self.CHAVE.encode(), arquivo.read())
+        self.assertEqual(ctl.ler_chave_steam(), self.CHAVE)
+        ctl.guardar_chave_steam("çhave com acento ✓")
+        self.assertEqual(ctl.ler_chave_steam(), "çhave com acento ✓")
+
+    @unittest.skipUnless(segredo.DISPONIVEL, "a proteção usa a DPAPI do Windows")
+    def test_chave_antiga_em_texto_puro_e_protegida_ao_abrir_o_app(self):
+        ctl.gravar_config("steam_chave", self.CHAVE)
+        ctl.cria_tabelas()
+        self.assertTrue(ctl.ler_config("steam_chave").startswith(segredo.PREFIXO))
+        self.assertEqual(ctl.ler_chave_steam(), self.CHAVE)
+
+    def test_valor_ilegivel_ou_ausente_devolve_vazio(self):
+        self.assertEqual(ctl.ler_chave_steam(), "")
+        ctl.gravar_config("steam_chave", segredo.PREFIXO + "isto-nao-e-um-valor-valido")
+        self.assertEqual(ctl.ler_chave_steam(), "")
+
+    def test_sem_protecao_disponivel_a_chave_nao_e_guardada(self):
+        with mock.patch.object(segredo, "DISPONIVEL", False):
+            ctl.guardar_chave_steam(self.CHAVE)
+            self.assertEqual(ctl.ler_config("steam_chave"), "")
+            ctl.gravar_config("steam_chave", self.CHAVE)  # texto puro de uma versão anterior
+            ctl.cria_tabelas()
+            self.assertEqual(ctl.ler_config("steam_chave"), "")
+        self.assertEqual(ctl.ler_chave_steam(), "")
 
     def test_capa_que_falta_e_baixada_pelo_appid(self):
         com_appid = ctl.salvar_jogo(jogo("Hades", self.pc, steam_appid="1145360"))
